@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+zap_report.html
+*.sarif
+.venv/
+venv/

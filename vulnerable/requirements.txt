@@ -1,0 +1,8 @@
+# App runs on these (modern enough to import on Python 3.9):
+Flask==2.0.3
+Werkzeug==2.0.3
+
+# Deliberately outdated dependency with known CVEs, but a *self-consistent*
+# pin so the image actually builds (pip's resolver rejects mutually
+# incompatible pins). Caught by: Trivy SCA. Report-only stage.
+Jinja2==3.0.3        # CVE-2024-22195 / CVE-2024-34064 (XSS/ReDoS, <3.1.4)

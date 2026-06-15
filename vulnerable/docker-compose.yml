@@ -1,0 +1,17 @@
+# Local run + an illustrative IaC misconfiguration example.
+# NOTE: Trivy's default misconfig policies cover Dockerfiles (see the gate),
+# but NOT docker-compose files — so these compose smells are a manual
+# talking point for the report, not an automated finding.
+# 'version:' attribute intentionally omitted (it is obsolete in modern Compose).
+services:
+  web:
+    build: .
+    container_name: vulnapp
+    ports:
+      - "5000:5000"
+    # VULN (IaC): privileged mode grants host-level capabilities.
+    privileged: true
+    # VULN (IaC/secrets): credential baked into compose file.
+    environment:
+      - SECRET_TOKEN=hardcoded-token-in-compose-9876
+    # Missing: read_only, cap_drop, resource limits, no-new-privileges

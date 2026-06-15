@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Recon Console</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="logo">&#9622;</span> RECON&nbsp;CONSOLE</div>
+    <div class="env-badge {{ env.cls }}">{{ env.label }}</div>
+  </header>
+
+  <main class="container">
+    <h1 class="title">Recon Console</h1>
+    <p class="tagline">// internal reconnaissance toolkit &mdash; directory lookup &amp; host probe</p>
+
+    <section class="grid">
+      <article class="card">
+        <h2><span class="ico">&#128270;</span> User Lookup</h2>
+        <p class="muted">Search the user directory by name.</p>
+        <form action="/user" method="get" autocomplete="off">
+          <input type="text" name="name" placeholder="e.g. alice">
+          <button type="submit">Search</button>
+        </form>
+        {% if user_result is not none %}
+        <div class="result">
+          <div class="result-label">Query Result</div>
+          <pre>{{ user_result | safe }}</pre>
+        </div>
+        {% endif %}
+      </article>
+
+      <article class="card">
+        <h2><span class="ico">&#128225;</span> Host Ping</h2>
+        <p class="muted">Probe whether a network host is reachable.</p>
+        <form action="/ping" method="get" autocomplete="off">
+          <input type="text" name="host" placeholder="e.g. 127.0.0.1">
+          <button type="submit">Ping</button>
+        </form>
+        {% if ping_result is not none %}
+        <div class="result">
+          <div class="result-label">Ping Result</div>
+          <pre>{{ ping_result | safe }}</pre>
+        </div>
+        {% endif %}
+      </article>
+    </section>
+  </main>
+
+  <footer class="foot">DevSecOps pipeline demo &middot; {{ env.label }}</footer>
+</body>
+</html>

@@ -1,0 +1,147 @@
+name: DevSecOps Pipeline
+
+# Runs on every push and PR — security shifts LEFT into the dev workflow.
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write   # required to publish SARIF to the Security tab
+
+env:
+  IMAGE_NAME: vulnapp
+  IMAGE_TAG: ci
+  # NOTE: bump these pinned action versions if a job reports "not found".
+  TRIVY_ACTION: aquasecurity/trivy-action@v0.36.0
+
+jobs:
+  # ----------------------------------------------------------------------
+  # STAGE 1 — SECRETS SCANNING  (HARD GATE: fails build on a leaked secret)
+  # ----------------------------------------------------------------------
+  secrets-scan:
+    name: 1) Secrets Scan (Gitleaks) [GATE]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # Full-tree scan every run (not just the push delta). gitleaks-action@v2
+      # only scans the commits in the triggering push, so a push that doesn't
+      # touch the secret would pass the gate. Scanning the working tree
+      # directly guarantees the planted secret is always caught -> gate fails.
+      - name: Gitleaks (full-tree scan, hard gate)
+        run: |
+          docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:latest \
+            dir /repo --no-banner --redact -v
+
+  # ----------------------------------------------------------------------
+  # STAGE 2 — SAST  (report-only: uploads findings to the Security tab)
+  # ----------------------------------------------------------------------
+  sast:
+    name: 2) SAST (Semgrep)
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep
+    steps:
+      - uses: actions/checkout@v4
+      - name: Semgrep scan
+        run: semgrep scan --config "p/default" --config "p/python" --config "p/secrets" --sarif --output semgrep.sarif
+        continue-on-error: true
+      - name: Upload SARIF
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep.sarif
+
+  # ----------------------------------------------------------------------
+  # STAGE 3 — SCA + IaC MISCONFIG  (report-only: Trivy on the filesystem)
+  # ----------------------------------------------------------------------
+  sca-and-iac:
+    name: 3) SCA + IaC Misconfig (Trivy FS)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Trivy filesystem scan (table output in logs)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,misconfig,secret
+          severity: HIGH,CRITICAL
+          format: table
+          exit-code: '0'        # report-only — does NOT block the build
+      - name: Trivy filesystem scan (SARIF)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,misconfig,secret
+          format: sarif
+          output: trivy-fs.sarif
+      - name: Upload SARIF
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-fs.sarif
+
+  # ----------------------------------------------------------------------
+  # STAGE 4 — BUILD + IMAGE SCAN (HARD GATE) + DAST
+  # ----------------------------------------------------------------------
+  container-security:
+    name: 4) Build, Image Scan [GATE] & DAST (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    # Run the SAME gate against both folders: the `vulnerable` leg goes red
+    # (gate working), the `fixed` leg goes green (remediation working) — the
+    # before/after demo in a single pipeline run.
+    strategy:
+      fail-fast: false          # don't cancel the `fixed` leg when `vulnerable` fails
+      matrix:
+        target: [vulnerable, fixed]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t "$IMAGE_NAME-${{ matrix.target }}:$IMAGE_TAG" ./${{ matrix.target }}
+
+      - name: Trivy image scan (HARD GATE — fails on HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}-${{ matrix.target }}:${{ env.IMAGE_TAG }}
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: '1'        # <-- this is what blocks a bad build
+          ignore-unfixed: true  # gate only on vulns that actually have a fix
+                                # (won't-fix base-image CVEs shouldn't block a
+                                #  fully-patched app — see the `fixed` leg)
+
+      - name: Deploy app for dynamic testing
+        if: always()            # run even after the gate fails, to demo DAST
+        run: |
+          docker run -d -p 5000:5000 --name vulnapp "$IMAGE_NAME-${{ matrix.target }}:$IMAGE_TAG"
+          sleep 12
+          curl -sf http://localhost:5000 || echo "app still warming up"
+
+      - name: DAST scan (OWASP ZAP baseline)
+        if: always()
+        run: |
+          # The ZAP image runs as the 'zap' user (uid 1000), which can't write
+          # to the runner-owned workspace -> the report silently fails to write.
+          # Give ZAP a dedicated world-writable output dir instead.
+          mkdir -p zap-out && chmod 777 zap-out
+          docker run --network host -v "${{ github.workspace }}/zap-out:/zap/wrk/:rw" \
+            -t ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py -t http://localhost:5000 -r zap_report.html -I || true
+          echo "--- contents of zap-out ---"; ls -la zap-out || true
+
+      - name: Upload ZAP report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-baseline-report-${{ matrix.target }}
+          path: zap-out/zap_report.html
+          if-no-files-found: warn

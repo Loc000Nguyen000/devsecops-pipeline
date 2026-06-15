@@ -1,0 +1,16 @@
+# Local run + a target for IaC misconfiguration scanning (hardened).
+services:
+  web:
+    build: .
+    container_name: vulnapp
+    ports:
+      - "5000:5000"
+    # FIX (IaC): privileged mode removed; container gets no host capabilities.
+    # FIX (IaC): drop all Linux capabilities, deny privilege escalation,
+    # and run with a read-only root filesystem.
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # FIX (secrets): no credentials baked into the compose file.

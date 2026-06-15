@@ -1,0 +1,7 @@
+# FIX (SCA): Flask/Werkzeug bumped past CVE-2023-30861, CVE-2023-25577,
+# CVE-2024-34069 (the old 2.0.3 pins were still flagged HIGH).
+Flask>=3.0.3
+Werkzeug>=3.0.6
+
+# FIX (SCA): patched version — the previously planted CVE is resolved.
+Jinja2>=3.1         # was 2.11.2  (CVE-2020-28493)
